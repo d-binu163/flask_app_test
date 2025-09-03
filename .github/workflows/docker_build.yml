@@ -1,0 +1,64 @@
+name: Docker Build & Test
+
+# 👇 Trigger on every push to any branch
+on:
+  push:
+    branches:
+      - main   # runs on push to all branches
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest   # Use a Linux runner
+
+    steps:
+      # Step 1: Checkout repository code
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # Step 2: Set up Docker Buildx (better build performance)
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      # Step 3: Build Docker image
+      - name: Build Docker image
+        run: |
+          docker build -t flask-app-test .
+
+      # Step 4: Run container in background
+      - name: Run container
+        run: |
+          docker run -d -p 5000:5000 --name test_container flask-app-test
+          sleep 10   # wait a bit for container to start
+
+      # Step 5: Run response test
+      - name: Check if the application is reachable
+        run: |
+          # This test checks for a successful HTTP response from the running container
+          response_code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000)
+          if [ "$response_code" -ne 200 ]; then
+            echo "Application is not reachable. Received status code: $response_code"
+            exit 1
+          else
+            echo "Application is running and reachable with status code: $response_code"
+          fi
+
+      # Step 6: Run type test
+      - name: Check if prediction is numeric
+        run: |
+          response=$(curl -s -X POST http://localhost:5000/predict \
+            -H "Content-Type: application/json" \
+            -d '{"age":0.038,"sex":0.05,"bmi":0.061,"bp":0.01,"s1":-0.044,"s2":-0.034,"s3":-0.043,"s4":-0.002,"s5":0.019,"s6":-0.017}')
+      
+          prediction=$(echo "$response" | jq -r .prediction)
+          if ! [[ $prediction =~ ^-?[0-9]+(\.[0-9]+)?$ ]]; then
+            echo "Prediction is not numeric: $prediction"
+            exit 1
+          fi
+          echo "Prediction is numeric: $prediction"
+
+
+      # Step 7: Stop container
+      - name: Stop container
+        run: |
+          docker stop test_container
+          docker rm test_container
